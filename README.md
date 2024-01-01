@@ -5,4 +5,5 @@ The program creates a file 'tabella.wiki' with the template to put in https://it
 
 Before publishing the changes check them carefully!
 
+It uses astroquery.simbad (python -m pip install -U --pre astroquery) 
 The astroquery.simbad library requires python < 3.10
