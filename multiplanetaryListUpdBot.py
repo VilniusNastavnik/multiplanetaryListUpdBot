@@ -1,22 +1,21 @@
 import re
 import sqlite3 as sl
-#import codecs
 from astroquery.simbad import Simbad
-import warnings
 from datetime import datetime
-#import time
 import warnings
 from astroquery.exceptions import AstropyWarning
 import logging
 import requests
-from _ast import If
+#import codecs
+#import time
 
 sqliteConn = sl.connect('stars.db')
 sqliteCursor = sqliteConn.cursor()
+brownDwarfMassLimit = 20.0
 
 def deg_to_hms(grad,cooType):
 
-    #logging.debug(f"deg_to_hms: {grad}, {cooType}")
+    logging.debug(f"deg_to_hms: {grad}, {cooType}")
     
     if(cooType == "RA"):
         h=float(grad)/15
@@ -62,6 +61,8 @@ def wikiRightFormat(val,precision):
 
 def getCoordFromSimbad(star):
 
+    logging.debug(f"getCoordFromSimbad: {star}")
+    
     if("'s" in star):   #Like Teegarden's
         star = star.replace("'s", "")
     star = re.sub("\s[A-D]$", "", star) #Some multiple (HD 116029 A, HD 177830 A,...) are not found without eliminating the last letter
@@ -85,6 +86,8 @@ def getCoordFromSimbad(star):
 
 def getCoordFromSimbadOnline(star):
 
+    logging.debug(f"getCoordFromSimbadOnline: {star}")
+    
     name = star
     #stars with peculiar names, not easy to find
     if(star == "1RXS 1609"):
@@ -128,28 +131,6 @@ def getCoordFromSimbadOnline(star):
     # If no results found
     print(f"{star} not found in Simbad")
     return 0, None, None
-
-#    result = Simbad.query_object(name)
-#    distance = 0
-#    if(result):
-#        distance = round(float(result['mesdistance.dist'][0])*3.261563777,1)  # Convert parsec to light years
-#        ra = deg_to_hms(result['ra'][0],"RA")
-#        dec = deg_to_hms(result['dec'][0],"DEC")
-#    else:
-#        if(star.endswith(" [A-D]")):
-#            name = re.sub("\s[A-D]$", "", star) #Some multiple (HD 116029 A, HD 177830 A,...) are not found without eliminating the last letter
-#            result = Simbad.query_object(name)
-#            if(result):
-#                distance = round(float(result['mesdistance.dist'][0])*3.261563777,1)  # Convert parsec to light years
-#                ra = deg_to_hms(result['ra'][0],"RA")
-#                dec = deg_to_hms(result['dec'][0],"DEC")
-#                return distance, ra, dec
-#            
-#        print (star,"not found in Simbad")
-#        ra = None
-#        dec = None
-
-#    return distance, ra, dec
 
 def getDBRow(name):
     sqliteCursor.execute("SELECT name,ra,dec,mag,dist,type,mass,radius,temp,age,metall,planets FROM stars WHERE name = ?",(name, )   )
@@ -197,44 +178,42 @@ def getDataFromExoplanet(exoplanetLocalFile):
             print(tmpExo)
             exit()
 
-        fieldEx[68] = fieldEx[68].rstrip()
-        #print(fieldEx[68],re.search('[A-Z\s][a-z]$',fieldEx[0]))
-        if(fieldEx[68] and fieldEx[68] != "Sun" and re.search('[A-Z\)\s][a-z]$',fieldEx[0]) is not None): #only valid stars: no the Sun, no brown dwarfs. It means 'Name b' or 'Name Ab' (at least one planet)
-         
-            #if(fieldEx[68].startswith("Kepler-45")):
-            #    print() 
-                    
-            if(star and star != fieldEx[68]) : # if it's a new star, save data of the previous
-                    
-                if(star == "2M0838+15"):
-                    planets = 0 # Triple brown dwarfs system 
-                elif(star == "V470 Cam (AB)"):
-                    planets = 0 # Orbiting objects are brown dwarfs  
-
-                if(planets > 1):
-                    sql = '''INSERT INTO stars (name,ra,dec,mag,dist,type,mass,radius,temp,age,metall,planets) VALUES(?,?,?,?,?,?,?,?,?,?,?,?);'''
-                    try:
-                        sqliteCursor.execute(sql,(star,ra,dec,mag,dist,type,mass,radius,temp,age,met,planets))
-                    except sl.Error as err:
-                        print("Insert star "+star+"("+ra,dec+") failed:",err)
-                planets = 0
-                dist = 0
-
-            #save data for next loop           
-            ra = deg_to_hms(fieldEx[69],"RA")
-            dec = deg_to_hms(fieldEx[70],"DEC")
-
-            if(fieldEx[76]) != '':
-                dist = round(float(fieldEx[76])*3.261563777,1)  # Convert parsec to light years
-            star=fieldEx[68]
-            type=fieldEx[88]
-            mag = zeroIfEmpty(fieldEx[71])
-            mass = zeroIfEmpty(fieldEx[82])
-            radius = zeroIfEmpty(fieldEx[85])
-            temp = zeroIfEmpty(fieldEx[92])
-            age = zeroIfEmpty(fieldEx[89])
-            met = zeroIfEmpty(fieldEx[79])
-            planets += 1
+        fieldEx[68] = fieldEx[68].rstrip()  # Mother star        
+        if(fieldEx[68] and fieldEx[68] != "Sun" and re.search('[A-Z\)\s][a-z]$',fieldEx[0]) is not None): #only valid stars: no the Sun. It means 'Name b' or 'Name AB)b' (at least one planet)
+               
+            planet_mass = float(zeroIfEmpty(fieldEx[2]))
+            if planet_mass > brownDwarfMassLimit:  # no brown dwarfs
+                logging.info(f"{fieldEx[0]} mass is {planet_mass}: excluded as probable brown dwarf")
+            else:
+                if(star and star != fieldEx[68]) : # if it's a new star, save data of the previous one
+                        
+                    if(star == "HS 0705+6700"):
+                        planets = 0 # Possible brown dwarfs system 
+    
+                    if(planets > 1):
+                        sql = '''INSERT INTO stars (name,ra,dec,mag,dist,type,mass,radius,temp,age,metall,planets) VALUES(?,?,?,?,?,?,?,?,?,?,?,?);'''
+                        try:
+                            sqliteCursor.execute(sql,(star,ra,dec,mag,dist,type,mass,radius,temp,age,met,planets))
+                        except sl.Error as err:
+                            print("Insert star "+star+"("+ra,dec+") failed:",err)
+                    planets = 0
+                    dist = 0
+    
+                #save data for next loop           
+                ra = deg_to_hms(fieldEx[69],"RA")
+                dec = deg_to_hms(fieldEx[70],"DEC")
+    
+                if(fieldEx[76]) != '':
+                    dist = round(float(fieldEx[76])*3.261563777,1)  # Convert parsec to light years
+                star=fieldEx[68]
+                type=fieldEx[88]
+                mag = zeroIfEmpty(fieldEx[71])
+                mass = zeroIfEmpty(fieldEx[82])
+                radius = zeroIfEmpty(fieldEx[85])
+                temp = zeroIfEmpty(fieldEx[92])
+                age = zeroIfEmpty(fieldEx[89])
+                met = zeroIfEmpty(fieldEx[79])                
+                planets += 1
 
     # Last line
     if( planets > 1):
@@ -302,6 +281,7 @@ def getDataFromSimbad():
         if(ra != None):
             try:
                 sqliteCursor.execute(sql,(dist,ra,dec,row[0]))
+                logging.debug(f"Star {row[0]} data updated with data from Simbad")
             except sl.Error as err:
                 print("Update 'stars' table with Simbad data for",row[0],"failed:",err)
 
@@ -353,14 +333,19 @@ def getDataFromNASA(nasaLocalFile):
             sql = "UPDATE stars SET mag=COALESCE(NULLIF(mag,0),?),dist=COALESCE(NULLIF(dist,''),?),type=COALESCE(NULLIF(type,''),?),mass=COALESCE(NULLIF(mass,''),?),radius=COALESCE(NULLIF(radius,''),?),temp=COALESCE(NULLIF(temp,''),?),age=COALESCE(NULLIF(age,''),?),metall=COALESCE(NULLIF(metall,''),?)  WHERE ra=? AND dec=?;"
             try:
                 sqliteCursor.execute(sql,(fieldNASA[3],dist,fieldNASA[5],fieldNASA[6],fieldNASA[7],fieldNASA[8],fieldNASA[9],fieldNASA[10],ra, dec))
+                logging.debug(f"Star of coordinates RA:{ra},DEC:{dec} updated with data from NASA")
             except sl.Error as err:
                 print("Update NASA data to",name,"failed:",err)
+                logging.error(f"Update NASA data to {name} failed: {err}")
+
         else: #udate by name
             sql = "UPDATE stars SET mag=COALESCE(NULLIF(mag,0),?),dist=COALESCE(NULLIF(dist,''),?),type=COALESCE(NULLIF(type,''),?),mass=COALESCE(NULLIF(mass,''),?),radius=COALESCE(NULLIF(radius,''),?),temp=COALESCE(NULLIF(temp,''),?),age=COALESCE(NULLIF(age,''),?),metall=COALESCE(NULLIF(metall,''),?)  WHERE name=?;"
             try:
                 sqliteCursor.execute(sql,(fieldNASA[3],dist,fieldNASA[5],fieldNASA[6],fieldNASA[7],fieldNASA[8],fieldNASA[9],fieldNASA[10],name))
+                logging.debug(f"Star {name} updated with data from NASA")
             except sl.Error as err:
                 print("Update 'stars' tables with NASA data for ",name,"failed:",err)
+                logging.error(f"Update 'stars' tables with NASA data for {name} failed: {err}")
 
     sqliteConn.commit()
 
@@ -444,7 +429,8 @@ def getDataFromWikipedia(wikiLocalFile):
 
                 # UPDATE WHERE not empty or not too different
                 if(row is None):  #It's in wiki, not in 'stars' db. Maybe ther is a problem
-                    print("Wiki star",name,"with coordinates RA:",raW,"DEC:",decW,"not in catalog exoplanet/Simbad") 
+                    logging.info(f"Star {name} with coordinates RA:{raW}, DEC:{decW} is in current wiki, but not valid (not existent or less then 2 valid planets)") 
+                    print("Star",name,"with coordinates RA:",raW,"DEC:",decW," is in current wiki, but not valid (not existent or less then 2 valid planets") 
                 else:
                     # Use wiki name and data if not null
                     rowList = list(row)
@@ -550,7 +536,7 @@ def main():
          age REAL DEFAULT 0.0,
          metall REAL DEFAULT 0.0,
          planets INTEGER
-      );
+        );
       """)
 
     sqliteCursor.execute("DROP TABLE IF EXISTS simbad")
@@ -570,7 +556,7 @@ def main():
          metall REAL,
          ids TEXT,
          PRIMARY KEY (ra, dec)
-      );
+        );
       """)
 
     #Simbad.add_votable_fields('mesdistance','V','ids') 
