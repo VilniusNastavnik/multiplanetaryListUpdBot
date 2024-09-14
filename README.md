@@ -8,3 +8,5 @@ Before publishing the changes check them carefully!
 It uses astroquery.simbad (python -m pip install -U --pre astroquery) 
 
 Tested with astroquery.simbad 0.4.8 and python 3.11
+
+Exclude objects with mass > 20 Jupiter's mass as probable brown dwarfs
