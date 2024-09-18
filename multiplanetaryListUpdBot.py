@@ -1,17 +1,29 @@
 import re
 import sqlite3 as sl
 from astroquery.simbad import Simbad
-from datetime import datetime
 import warnings
 from astroquery.exceptions import AstropyWarning
 import logging
 import requests
 #import codecs
 #import time
+#from datetime import datetime
 
 sqliteConn = sl.connect('stars.db')
 sqliteCursor = sqliteConn.cursor()
-brownDwarfMassLimit = 20.0
+brownDwarfMassLimit = 13.0
+
+simbad_star_names = {  #stars with peculiar names for Simbad, not easy to find
+        "1RXS 1609": "1RXS J160929.1-210524",
+        "1SWASP J1407": "1SWASP J140747.93-394542.6",
+        "2M 0103-55 (AB)": "SCR J0103-5515",
+        "Teegarden's": "gat 1370",
+        "Mu Arae": "mu Ara",  # to avoid confusion with V* MU Ara
+        "Nu Ophiuchi": "HD 163917",  # to avoid confusion with V* NU Oph
+        "82 Eri": "HD 20794"
+        #"TOI-4481": "GJ 806",
+        #"PSR 1257 12": "PSR B1257+12" 
+}
 
 def deg_to_hms(grad,cooType):
 
@@ -84,39 +96,24 @@ def getCoordFromSimbad(star):
 
     return distance, deg_to_hms(row[0],"RA"), deg_to_hms(row[1],"DEC")
 
+def query_simbad(name):
+    result = Simbad.query_object(name)
+    if result:
+        distance = round(float(result['mesdistance.dist'][0]) * 3.261563777, 1)  # Convert parsecs to light-years
+        ra = deg_to_hms(result['ra'][0], "RA")
+        dec = deg_to_hms(result['dec'][0], "DEC")
+        return distance, ra, dec
+    return 0, None, None
+    
 def getCoordFromSimbadOnline(star):
 
     logging.debug(f"getCoordFromSimbadOnline: {star}")
     
     name = star
-    #stars with peculiar names, not easy to find
-    if(star == "1RXS 1609"):
-        name = "1RXS J160929.1-210524"
-    elif(star == "1SWASP J1407"):
-        name = "1SWASP J140747.93-394542.6"
-    elif(star == "2M 0103-55 (AB)"):
-        name = "SCR J0103-5515"
-    elif(star == "Teegarden's"):
-        name = "gat 1370"
-    elif(star == "Mu Arae"):
-        name = "mu Ara" # to avoid confusion with  V* MU Ara
-    elif(star == "TOI-4481"):
-        name = "GJ 806"
-    elif(star == "Nu Ophiuchi"): # to avoid confusion with  V* MU Ara
-        name = "HD 163917" 
-    elif(star == "PSR 1257 12"):
-        name = "PSR B1257+12" 
+    if star in simbad_star_names:
+        name = simbad_star_names.get(star)
 
     Simbad.add_votable_fields('mesdistance')
-    
-    def query_simbad(name):
-        result = Simbad.query_object(name)
-        if result:
-            distance = round(float(result['mesdistance.dist'][0]) * 3.261563777, 1)  # Convert parsecs to light-years
-            ra = deg_to_hms(result['ra'][0], "RA")
-            dec = deg_to_hms(result['dec'][0], "DEC")
-            return distance, ra, dec
-        return 0, None, None
     
     response = query_simbad(name)
     if response:
@@ -160,7 +157,7 @@ def getDataFromExoplanet(exoplanetLocalFile):
    
     planets = 0  # Variable incremented on every occurrence of the same star
     star = ''
-    ra=0;dec=0;mag=0;dist=0;mass=0;radius=0;temp=0;age=0;met=0
+    ra=0;dec=0;mag=0;dist=0;spec_type="";mass=0;radius=0;temp=0;age=0;met=0
     for lineExo in LinesExo:
         
         #if "Kepler-451" in lineExo:
@@ -193,7 +190,7 @@ def getDataFromExoplanet(exoplanetLocalFile):
                     if(planets > 1):
                         sql = '''INSERT INTO stars (name,ra,dec,mag,dist,type,mass,radius,temp,age,metall,planets) VALUES(?,?,?,?,?,?,?,?,?,?,?,?);'''
                         try:
-                            sqliteCursor.execute(sql,(star,ra,dec,mag,dist,type,mass,radius,temp,age,met,planets))
+                            sqliteCursor.execute(sql,(star,ra,dec,mag,dist,spec_type,mass,radius,temp,age,met,planets))
                         except sl.Error as err:
                             print("Insert star "+star+"("+ra,dec+") failed:",err)
                     planets = 0
@@ -206,7 +203,7 @@ def getDataFromExoplanet(exoplanetLocalFile):
                 if(fieldEx[76]) != '':
                     dist = round(float(fieldEx[76])*3.261563777,1)  # Convert parsec to light years
                 star=fieldEx[68]
-                type=fieldEx[88]
+                spec_type=fieldEx[88]
                 mag = zeroIfEmpty(fieldEx[71])
                 mass = zeroIfEmpty(fieldEx[82])
                 radius = zeroIfEmpty(fieldEx[85])
@@ -218,7 +215,7 @@ def getDataFromExoplanet(exoplanetLocalFile):
     # Last line
     if( planets > 1):
         try:
-            sqliteCursor.execute(sql,(star,ra,dec,mag,dist,type,mass,radius,temp,age,met,planets))
+            sqliteCursor.execute(sql,(star,ra,dec,mag,dist,spec_type,mass,radius,temp,age,met,planets))
         except sl.Error as err:
             print(sql,err)
 
@@ -244,14 +241,17 @@ def getDataFromSimbad():
         name = re.sub("\s[A-D]$", "", row[0]) #Some binaries (HD 116029 A, HD 177830 A,...) are not found without eliminating the last letter
         query.append(name)
 
+    query.extend(simbad_star_names.values())
     #stars with peculiar names, not easy to find
-    query.append("1RXS J160929.1-210524")
-    query.append("1SWASP J140747.93-394542.6")
-    query.append("SCR J0103-5515")
-    query.append("gat 1370")
-    query.append("GJ 806")
-    query.append("mu Ara")
-    query.append("HD 20794")
+    #if star in simbad_star_names:
+        #name = simbad_star_names.get(star)
+    #query.append("1RXS J160929.1-210524")
+    #query.append("1SWASP J140747.93-394542.6")
+    #query.append("SCR J0103-5515")
+    #query.append("gat 1370")
+    #query.append("GJ 806")
+    #query.append("mu Ara")
+    #query.append("HD 20794")
 
     result = Simbad.query_objects(query)
    
@@ -311,7 +311,7 @@ def getDataFromNASA(nasaLocalFile):
         linesNASA = fileNASA.readlines()
 
     for lineNASA in linesNASA:   
-        ts = datetime.timestamp(datetime.now())
+        #ts = datetime.timestamp(datetime.now())
         fieldNASA = lineNASA.strip("'").rstrip('\n').split(",")
     
         name = fieldNASA[0].strip('"')
@@ -381,10 +381,15 @@ def getDataFromWikipedia(wikiLocalFile):
                         valsWiki.append(tmp)
                     else:
                         valsWiki.append(None)
-
+                #if "HD 219134" in valsWiki[0]:
+                #    print(valsWiki[0])
                 wikiName = valsWiki[0].replace('[[','').replace(']]','').encode("utf-8").decode()  #get star name from wiki page
                 tmpName = wikiName.split("|")
                 name = tmpName[0] # Appearing name, not internal link
+                
+                ref_index = name.find("<ref>")
+                if ref_index != -1: #if the name contains a reference, exclude it
+                    name = name[0:ref_index]
 
                 raWf = valsWiki[1].split("|")
                 ma = int(raWf[2])
@@ -430,7 +435,7 @@ def getDataFromWikipedia(wikiLocalFile):
                 # UPDATE WHERE not empty or not too different
                 if(row is None):  #It's in wiki, not in 'stars' db. Maybe ther is a problem
                     logging.info(f"Star {name} with coordinates RA:{raW}, DEC:{decW} is in current wiki, but not valid (not existent or less then 2 valid planets)") 
-                    print("Star",name,"with coordinates RA:",raW,"DEC:",decW," is in current wiki, but not valid (not existent or less then 2 valid planets") 
+                    print("Star",name,"with coordinates RA:",raW,"DEC:",decW," is in current wiki, but not valid (not existent or less then 2 valid planets)") 
                 else:
                     # Use wiki name and data if not null
                     rowList = list(row)
@@ -496,9 +501,18 @@ def generateWikitable(tableOutFile):
         eta = wikiRightFormat(row[9],-1)
         metall = wikiRightFormat(row[10],2)
 
-        tmp = "|Stella=[["+row[0]+"]]||Ascensione retta={{RA|"+raOut+"}}||Declinazione={{DEC|"+decOut+"}}||Magnitudine apparente="+mag+"||Distanza="+dist+"||Tipo spettrale="+tipo+"||Massa="+massa+"||Raggio="+raggio+"||Temperatura="+temper+"||Età="+eta+"||Metallicità="+metall+"||Pianeti="+str(row[11])+"}}"
+        ref_index = row[0].find("<ref>")
+        if ref_index != -1: #if the name contains a reference put it outside [[name]]
+            name = "[["+row[0][0:ref_index]+"]]"+row[0][ref_index:]
+        else:
+            name = "[["+row[0]+"]]"
+        tmp = "|Stella="+name+"||Ascensione retta={{RA|"+raOut+"}}||Declinazione={{DEC|"+decOut+"}}||Magnitudine apparente="+mag+"||Distanza="+dist+"||Tipo spettrale="+tipo+"||Massa="+massa+"||Raggio="+raggio+"||Temperatura="+temper+"||Età="+eta+"||Metallicità="+metall+"||Pianeti="+str(row[11])+"}}"
       
         tableWiki.write("%s\n" % tmp.replace('.',','))
+        
+        if any(isinstance(element, str) and "<ref>" in element for element in row):
+            logging.warning(f"A reference is present in {name}. Check that it's correctly reported.")
+            print("A reference is present in "+name[2:name.find("]]")]+". Check that it's correctly reported.")
 
     line = "<noinclude>{{Stelle con pianeti extrasolari confermati/Bottom}}</noinclude>"
     tableWiki.write("%s\n" % line)
@@ -565,8 +579,8 @@ def main():
     #exit(0)
    
     print("Retrieving data from Exoplanet ...")
-    getDataFromExoplanet(None)    
-    #getDataFromExoplanet("exoplanet.csv")
+    #getDataFromExoplanet(None)    
+    getDataFromExoplanet("exoplanet.csv")
     print("Retrieving data from Simbad ...")
     getDataFromSimbad()
     print("Retrieving data from NASA ...")
@@ -577,7 +591,9 @@ def main():
     #getDataFromWikipedia("wiki.out")
     print("Generating 'tabella.wiki' ...")
     generateWikitable("tabella.wiki")
-    print("Done. Copy the content of the file 'tabella.wiki' in the correct place inside https://it.wikipedia.org/wiki/Sistemi_multiplanetari. Check the result before publishing!")
+    print("Done.")
+    print("Copy the content of the file 'tabella.wiki' in the correct place inside https://it.wikipedia.org/wiki/Sistemi_multiplanetari. Check the result before publishing!")
+
 
 if __name__ == "__main__":
     main()
