@@ -390,6 +390,10 @@ def getDataFromWikipedia(wikiLocalFile):
                 ref_index = name.find("<ref>")
                 if ref_index != -1: #if the name contains a reference, exclude it
                     name = name[0:ref_index]
+                    
+                if "<ref>" in lineWikiRaw:
+                    logging.warning(f"A reference is present in {name}. Check that it's correctly reported.")
+                    print("A reference is present in "+name+". Check that it's correctly reported.")
 
                 raWf = valsWiki[1].split("|")
                 ma = int(raWf[2])
@@ -509,10 +513,6 @@ def generateWikitable(tableOutFile):
         tmp = "|Stella="+name+"||Ascensione retta={{RA|"+raOut+"}}||Declinazione={{DEC|"+decOut+"}}||Magnitudine apparente="+mag+"||Distanza="+dist+"||Tipo spettrale="+tipo+"||Massa="+massa+"||Raggio="+raggio+"||Temperatura="+temper+"||Età="+eta+"||Metallicità="+metall+"||Pianeti="+str(row[11])+"}}"
       
         tableWiki.write("%s\n" % tmp.replace('.',','))
-        
-        if any(isinstance(element, str) and "<ref>" in element for element in row):
-            logging.warning(f"A reference is present in {name}. Check that it's correctly reported.")
-            print("A reference is present in "+name[2:name.find("]]")]+". Check that it's correctly reported.")
 
     line = "<noinclude>{{Stelle con pianeti extrasolari confermati/Bottom}}</noinclude>"
     tableWiki.write("%s\n" % line)
@@ -579,8 +579,8 @@ def main():
     #exit(0)
    
     print("Retrieving data from Exoplanet ...")
-    #getDataFromExoplanet(None)    
-    getDataFromExoplanet("exoplanet.csv")
+    getDataFromExoplanet(None)    
+    #getDataFromExoplanet("exoplanet.csv")
     print("Retrieving data from Simbad ...")
     getDataFromSimbad()
     print("Retrieving data from NASA ...")
