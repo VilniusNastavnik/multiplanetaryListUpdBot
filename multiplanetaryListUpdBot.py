@@ -77,7 +77,7 @@ def getCoordFromSimbad(star):
     
     if("'s" in star):   #Like Teegarden's
         star = star.replace("'s", "")
-    star = re.sub("\s[A-D]$", "", star) #Some multiple (HD 116029 A, HD 177830 A,...) are not found without eliminating the last letter
+    star = re.sub(r"\s[A-D]$", "", star) #Some multiple (HD 116029 A, HD 177830 A,...) are not found without eliminating the last letter
 
     sqliteCursor.execute("SELECT ra,dec,dist,mag,ids FROM simbad WHERE ids LIKE '%"+star+"%'") 
     rows = sqliteCursor.fetchall()
@@ -176,7 +176,7 @@ def getDataFromExoplanet(exoplanetLocalFile):
             exit()
 
         fieldEx[68] = fieldEx[68].rstrip()  # Mother star        
-        if(fieldEx[68] and fieldEx[68] != "Sun" and re.search('[A-Z\)\s][a-z]$',fieldEx[0]) is not None): #only valid stars: no the Sun. It means 'Name b' or 'Name AB)b' (at least one planet)
+        if(fieldEx[68] and fieldEx[68] != "Sun" and re.search(r'[A-Z\)\s][a-z]$',fieldEx[0]) is not None): #only valid stars: no the Sun. It means 'Name b' or 'Name AB)b' (at least one planet)
                
             planet_mass = float(zeroIfEmpty(fieldEx[2]))
             if planet_mass > brownDwarfMassLimit:  # no brown dwarfs
@@ -238,7 +238,7 @@ def getDataFromSimbad():
     query = []
     for row in starsRows:
         name = row[0]
-        name = re.sub("\s[A-D]$", "", row[0]) #Some binaries (HD 116029 A, HD 177830 A,...) are not found without eliminating the last letter
+        name = re.sub(r"\s[A-D]$", "", row[0]) #Some binaries (HD 116029 A, HD 177830 A,...) are not found without eliminating the last letter
         query.append(name)
 
     query.extend(simbad_star_names.values())
