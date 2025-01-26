@@ -13,7 +13,7 @@ sqliteConn = sl.connect('stars.db')
 sqliteCursor = sqliteConn.cursor()
 brownDwarfMassLimit = 13.0
 
-simbad_star_names = {  #stars with peculiar names for Simbad, not easy to find
+peculiar_star_names = {  #stars with peculiar names for Simbad, not easy to find
         "1RXS 1609": "1RXS J160929.1-210524",
         "1SWASP J1407": "1SWASP J140747.93-394542.6",
         "2M 0103-55 (AB)": "SCR J0103-5515",
@@ -21,8 +21,6 @@ simbad_star_names = {  #stars with peculiar names for Simbad, not easy to find
         "Mu Arae": "mu Ara",  # to avoid confusion with V* MU Ara
         "Nu Ophiuchi": "HD 163917",  # to avoid confusion with V* NU Oph
         "82 Eri": "HD 20794"
-        #"TOI-4481": "GJ 806",
-        #"PSR 1257 12": "PSR B1257+12" 
 }
 
 def deg_to_hms(grad,cooType):
@@ -71,63 +69,81 @@ def wikiRightFormat(val,precision):
     else:
         return str(val)
 
-def getCoordFromSimbad(star):
+def getCoordFromSimbadLocalTable(star):
 
     logging.debug(f"getCoordFromSimbad: {star}")
-    
-    if("'s" in star):   #Like Teegarden's
-        star = star.replace("'s", "")
-    star = re.sub(r"\s[A-D]$", "", star) #Some multiple (HD 116029 A, HD 177830 A,...) are not found without eliminating the last letter
 
-    sqliteCursor.execute("SELECT ra,dec,dist,mag,ids FROM simbad WHERE ids LIKE '%"+star+"%'") 
+    sqliteCursor.execute("SELECT ra, dec, dist, mag, ids FROM simbad WHERE REPLACE(ids, '  ', ' ') LIKE '%' || REPLACE(?, '  ', ' ') || '%'", (star,))
     rows = sqliteCursor.fetchall()
    
     if(len(rows) == 0):
-        return None, None, None
+        return None, None, 0, 0, None
+    if(len(rows) == 1):
+        return rows[0][0], rows[0][1], rows[0][2], rows[0][3], rows[0][4]
 
+    # In case of multiple records
+    count = 0
+    pattern = re.escape(star) + r'\||' + re.escape(star) + r'$'
     for row in rows:
-        if(re.search(star+"[^0-9]",row[4])): #Exclude extra number to avoid confusion between A-123 and A-12
-            break
+        ids = re.sub(r'\s+', ' ', row[4])  # Remove multiple spaces
+        if re.search(pattern, ids, re.IGNORECASE):
+            rec = row
+            count += 1
 
-    try:
-        distance = round(row[2]*3.261563777,1)
-    except:
-        distance = 0
-
-    return distance, deg_to_hms(row[0],"RA"), deg_to_hms(row[1],"DEC")
+    if count != 1:
+        logging.warning(f"getCoordFromSimbadLocalTable: found {count} data record for {star}.")
+        return None, None, 0, 0, None
+    else:
+        return rec[0], rec[1], rec[2], rec[3], rec[4]
 
 def query_simbad(name):
     result = Simbad.query_object(name)
-    if result:
-        distance = round(float(result['mesdistance.dist'][0]) * 3.261563777, 1)  # Convert parsecs to light-years
+    if result: # if found use only the first result [0]
         ra = deg_to_hms(result['ra'][0], "RA")
         dec = deg_to_hms(result['dec'][0], "DEC")
-        return distance, ra, dec
-    return 0, None, None
+        distance = pc2LigthYear(result['mesdistance.dist'][0], result['mesdistance.unit'][0])
+        mag = result['V'][0]
+        ids = re.sub(r'\|\*\s{1,2}', '|', result['ids'][0])  #drop leading asterisks and spaces
+        ids = re.sub(r'NAME\s+', '', ids)  # Remove "NAME " from the name
+        return ra, dec, distance, mag, ids
+    return None, None, 0, 0, None
+
+def pc2LigthYear(distance, unit):
+    distance = round(float(distance) * 3.261563777, 1)  # Convert parsecs to light-years
+    if 'kpc' in unit:
+        distance = distance*1000
+    elif 'Mpc' in unit:
+        distance = distance*1000000
+
+    return distance
     
 def getCoordFromSimbadOnline(star):
 
     logging.debug(f"getCoordFromSimbadOnline: {star}")
     
     name = star
-    if star in simbad_star_names:
-        name = simbad_star_names.get(star)
+    if star in peculiar_star_names:
+        name = peculiar_star_names.get(star)
 
-    Simbad.add_votable_fields('mesdistance')
-    
-    response = query_simbad(name)
-    if response:
-        return response
+    Simbad.add_votable_fields('mesdistance','V','ids')    
 
     if re.search(r"\s[A-D]$", star):
         name = re.sub(r"\s[A-D]$", "", star)  # Remove last letter for multiple systems, sometimes cataloged as single
-        response = query_simbad(name)
-        if response:
-            return response
 
-    # If no results found
-    print(f"{star} not found in Simbad")
-    return 0, None, None
+    if re.search(r"\s\(AB\)$", star):
+        name = re.sub(r"\s\(AB\)$", "", star)  # Remove characters indicating a double star, sometimes cataloged as single
+
+    response = query_simbad(star)
+    if response[0]:
+        return response
+    else:
+        response = query_simbad(name)
+        if response[0]:
+            return response
+        else:
+            # If no results found
+            logging.debug(f"getCoordFromSimbadOnline: no results found for {star}")
+            return None, None, 0, 0, None
 
 def getDBRow(name):
     sqliteCursor.execute("SELECT name,ra,dec,mag,dist,type,mass,radius,temp,age,metall,planets FROM stars WHERE name = ?",(name, )   )
@@ -188,9 +204,9 @@ def getDataFromExoplanet(exoplanetLocalFile):
                         planets = 0 # Possible brown dwarfs system 
     
                     if(planets > 1):
-                        sql = '''INSERT INTO stars (name,ra,dec,mag,dist,type,mass,radius,temp,age,metall,planets) VALUES(?,?,?,?,?,?,?,?,?,?,?,?);'''
+                        sql = '''INSERT INTO stars (name,ra,dec,mag,dist,type,mass,radius,temp,age,metall,planets,altNames) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?);'''
                         try:
-                            sqliteCursor.execute(sql,(star,ra,dec,mag,dist,spec_type,mass,radius,temp,age,met,planets))
+                            sqliteCursor.execute(sql,(star,ra,dec,mag,dist,spec_type,mass,radius,temp,age,met,planets,altNames))
                         except sl.Error as err:
                             print("Insert star "+star+"("+ra,dec+") failed:",err)
                     planets = 0
@@ -210,12 +226,13 @@ def getDataFromExoplanet(exoplanetLocalFile):
                 temp = zeroIfEmpty(fieldEx[92])
                 age = zeroIfEmpty(fieldEx[89])
                 met = zeroIfEmpty(fieldEx[79])                
+                altNames = fieldEx[97]
                 planets += 1
 
     # Last line
     if( planets > 1):
         try:
-            sqliteCursor.execute(sql,(star,ra,dec,mag,dist,spec_type,mass,radius,temp,age,met,planets))
+            sqliteCursor.execute(sql,(star,ra,dec,mag,dist,spec_type,mass,radius,temp,age,met,planets,altNames))
         except sl.Error as err:
             print(sql,err)
 
@@ -227,63 +244,101 @@ def getDataFromExoplanet(exoplanetLocalFile):
 
     sqliteConn.commit()
 
-def getDataFromSimbad():
+def getDataFromSimbadSite():
+    """
+    Fetches star data from the Simbad astronomical database and updates the local database for coordinates distance (in pc) and magnitude.
+    If a star is not found with the first general query, it attempts to retrieve more precise data online.
 
-    logging.info(f"getDataFromSimbad")
-    
-    Simbad.add_votable_fields('mesdistance','V','ids')   
+    """
+
+    logging.info(f"getDataFromSimbadSite") 
    
+    #Get data already downloaded from Exoplanets.eu
     sqliteCursor.execute("SELECT name FROM stars")
     starsRows = sqliteCursor.fetchall()
     query = []
     for row in starsRows:
         name = row[0]
-        name = re.sub(r"\s[A-D]$", "", row[0]) #Some binaries (HD 116029 A, HD 177830 A,...) are not found without eliminating the last letter
         query.append(name)
 
-    query.extend(simbad_star_names.values())
-    #stars with peculiar names, not easy to find
-    #if star in simbad_star_names:
-        #name = simbad_star_names.get(star)
-    #query.append("1RXS J160929.1-210524")
-    #query.append("1SWASP J140747.93-394542.6")
-    #query.append("SCR J0103-5515")
-    #query.append("gat 1370")
-    #query.append("GJ 806")
-    #query.append("mu Ara")
-    #query.append("HD 20794")
+    query.extend(peculiar_star_names.values())
 
+    Simbad.add_votable_fields('mesdistance','V','ids')  
     result = Simbad.query_objects(query)
-   
+
+    #put Simbad results in local db (table 'simbad')
     for row in result:
         sql = '''INSERT INTO simbad (name,ra,dec,mag,dist,ids) VALUES(?,?,?,?,?,?);'''
 
-        distance = row['mesdistance.dist']
-        if(row['mesdistance.unit'] == 'kpc'):
-            distance = distance*1000
-        elif(row['mesdistance.unit'] == 'Mpc'):
-            distance = distance*1000000
-        try:
-            sqliteCursor.execute(sql,(row['main_id'],row['ra'],row['dec'],row['V'],distance,row['ids']))
-        except sl.Error as err:
-            if("UNIQUE constraint failed" not in err.args[0]): #Ignore duplicated
-                print("Insert star "+row['main_id']+"("+row['ra'],row['dec']+") failed:",err)
-   
+        if(row['main_id'] != ''): # if name is empty, it's a wrong record
+            name = re.sub(r'^\*\s{1,2}', '', row['main_id']) #drop leading asterisks and spaces
+            name = re.sub(r'^NAME\s+', '', name)  # Remove "NAME " from the beginning of the name
+
+            ra = deg_to_hms(row['ra'], "RA")
+            dec = deg_to_hms(row['dec'], "DEC")
+            distance = pc2LigthYear(row['mesdistance.dist'], row['mesdistance.unit'])
+            mag = result['V'][0]
+            if not mag:
+                mag = 0
+            ids = re.sub(r'\|\*\s{1,2}', '|', result['ids'][0])  #drop leading asterisks and spaces
+            ids = re.sub(r'NAME\s+', '', ids)  # Remove "NAME " from the name
+            ids = re.sub(r'\|\*\s{1,2}', '|', row['ids'])  #drop leading asterisks and spaces
+            ids = re.sub(r'NAME\s+', '', ids)  # Remove "NAME " from the name
+            ids = name + "|" + ids
+
+            try:
+                sqliteCursor.execute(sql,(name,ra,dec,mag,distance,ids))
+            except sl.Error as err:
+                if("UNIQUE constraint failed" not in err.args[0]): #Ignore duplicated
+                    print("Insert star "+name+"("+ra,dec+") failed:",err)
+    
     sqliteConn.commit()
 
-    #update stars
-    sql = "UPDATE stars SET dist=COALESCE(NULLIF(dist,''),?),ra=?,dec=? WHERE name=?;"
+    # double check 'simbad' table
     for row in starsRows:
-        dist, ra, dec = getCoordFromSimbad(row[0])
-        if(ra == None): # if not found in Simbad local try again online
-            dist, ra, dec = getCoordFromSimbadOnline(row[0])
+        #Search in 'simbad' table if star is correctly present
+        ra, dec, dist, mag, ids = getCoordFromSimbadLocalTable(row[0])
+        if(ra == None): # if not found in Simbad local DB try again online. It's more efficient in finding names
 
+            ra, dec, dist, mag, ids = getCoordFromSimbadOnline(row[0])
+
+            if(ra != None): #if found, check if already present with different ids and update 'simbad' table ids. Otherwise insert new row
+                try:
+                    # Check for star with this new found ids (synonyms)
+                    sqliteCursor.execute("SELECT name FROM simbad WHERE ids LIKE ?", ('%' + ids + '%',))
+                    synonymIds = sqliteCursor.fetchone()
+                    ids = row[0] + "|" + ids
+                    update = False
+                    if synonymIds: #if found, add the name as new id
+                        sqliteCursor.execute("UPDATE simbad SET ids=? WHERE name=?;",(ids,synonymIds[0]))
+                        logging.debug(f"Star {synonymIds[0]} data updated with data from Simbad")
+                        update = True
+                    else: # otherwise check for star with this new found coordinats (synonyms)
+                        sqliteCursor.execute("SELECT name, ra, dec FROM simbad WHERE ra=? AND dec=?", (ra,dec))
+                        synonymCoord = sqliteCursor.fetchone()
+                        if synonymCoord:
+                            sqliteCursor.execute("UPDATE simbad SET ids=? WHERE ra=? AND dec=?",(ids,ra,dec))
+                            logging.debug(f"Star of coordinates {ra} and {dec} updated with data from Simbad")
+                            update = True
+                    if not update: # otherwise insert new row
+                        if not mag:
+                            mag = 0
+                        sqliteCursor.execute("INSERT INTO simbad (name,ra,dec,mag,dist,ids) VALUES(?,?,?,?,?,?);",
+                                (row[0],ra,dec,mag,dist,ids))
+                        logging.debug(f"Star {row[0]} inserted in simbad table")
+                except sl.Error as err:
+                    print("Update/insert in 'simbad' table with online Simbad data for",row[0],"failed:",err)
+
+        # If found, update 'star' table
+        sqlStars = "UPDATE stars SET dist=COALESCE(NULLIF(dist,''),?),ra=?,dec=? WHERE name=?;"
         if(ra != None):
             try:
-                sqliteCursor.execute(sql,(dist,ra,dec,row[0]))
+                sqliteCursor.execute(sqlStars,(dist,ra,dec,row[0]))
                 logging.debug(f"Star {row[0]} data updated with data from Simbad")
             except sl.Error as err:
                 print("Update 'stars' table with Simbad data for",row[0],"failed:",err)
+        else:
+            logging.warning(f"Star {row[0]}: not data found in Simbad")
 
     sqliteConn.commit()
 
@@ -329,7 +384,7 @@ def getDataFromNASA(nasaLocalFile):
         sqliteCursor.execute("SELECT * FROM stars WHERE name = ?",(name, ) )
         rowForName = sqliteCursor.fetchone()
         if(rowForName is None):# name not found. Try to update by coordinates
-            distSimbad, ra, dec = getCoordFromSimbad(name)
+            ra, dec, distSimbad, mag, ids = getCoordFromSimbadLocalTable(name)
             sql = "UPDATE stars SET mag=COALESCE(NULLIF(mag,0),?),dist=COALESCE(NULLIF(dist,''),?),type=COALESCE(NULLIF(type,''),?),mass=COALESCE(NULLIF(mass,''),?),radius=COALESCE(NULLIF(radius,''),?),temp=COALESCE(NULLIF(temp,''),?),age=COALESCE(NULLIF(age,''),?),metall=COALESCE(NULLIF(metall,''),?)  WHERE ra=? AND dec=?;"
             try:
                 sqliteCursor.execute(sql,(fieldNASA[3],dist,fieldNASA[5],fieldNASA[6],fieldNASA[7],fieldNASA[8],fieldNASA[9],fieldNASA[10],ra, dec))
@@ -412,10 +467,12 @@ def getDataFromWikipedia(wikiLocalFile):
                 decW = str(int(decWf[1])) +"|"+ str(md) +"|"+ str(sd)    #get DEC from wiki page
             
                 # Search coordinates in 'stars' by Simbad(name) (distance ignored 'cause already in 'stars')
-                distSimbad, ra, dec = getCoordFromSimbad(name)
-                if(ra == None): # if not found in Simbad local try again online
+                if name == "Kepler-10":
+                    print()
+                ra, dec, distSimbad, mag, ids = getCoordFromSimbadLocalTable(name)
+                """if(ra == None): # if not found in Simbad local try again online
                     distSimbad, ra, dec = getCoordFromSimbadOnline(name)
-                    #print(distSimbad, ra, dec)
+                    #print(distSimbad, ra, dec)"""
 
                 if(ra == None): # if not found anyway, use wiki data
                     ra = raW
@@ -533,23 +590,23 @@ def main():
             ]
         )
     warnings.filterwarnings('ignore', category=AstropyWarning)
-
     sqliteCursor.execute("DROP TABLE IF EXISTS stars")
     with sqliteConn:
         sqliteConn.execute("""
-         CREATE TABLE stars (
-         name TEXT,
-         ra TEXT,
-         dec TEXT,
-         mag REAL DEFAULT 0.0,
-         dist REAL DEFAULT 0.0,
-         type TEXT,
-         mass REAL DEFAULT 0.0,
-         radius REAL DEFAULT 0.0,
-         temp REAL DEFAULT 0.0,
-         age REAL DEFAULT 0.0,
-         metall REAL DEFAULT 0.0,
-         planets INTEGER
+          CREATE TABLE stars (
+          name TEXT,
+          ra TEXT,
+          dec TEXT,
+          mag REAL DEFAULT 0.0,
+          dist REAL DEFAULT 0.0,
+          type TEXT,
+          mass REAL DEFAULT 0.0,
+          radius REAL DEFAULT 0.0,
+          temp REAL DEFAULT 0.0,
+          age REAL DEFAULT 0.0,
+          metall REAL DEFAULT 0.0,
+          planets INTEGER,
+          altNames TEXT
         );
       """)
 
@@ -562,29 +619,18 @@ def main():
          dec TEXT,
          mag REAL,
          dist REAL,
-         type TEXT,
-         mass REAL,
-         radius REAL,
-         temp REAL,
-         age REAL,
-         metall REAL,
          ids TEXT,
          PRIMARY KEY (ra, dec)
         );
       """)
-
-    #Simbad.add_votable_fields('mesdistance','V','ids') 
-    #result = Simbad.query_object('HD 30177')
-    #print(result)
-    #exit(0)
    
     print("Retrieving data from Exoplanet ...")
     getDataFromExoplanet(None)    
     #getDataFromExoplanet("exoplanet.csv")
     print("Retrieving data from Simbad ...")
-    getDataFromSimbad()
-    print("Retrieving data from NASA ...")
-    getDataFromNASA(None)                     
+    getDataFromSimbadSite()
+    #print("Retrieving data from NASA ...")
+    #getDataFromNASA(None)                     
     #getDataFromNASA("NASA.out")
     print("Retrieving data from Wikipedia ...")
     getDataFromWikipedia(None)
