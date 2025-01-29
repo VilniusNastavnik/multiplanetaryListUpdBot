@@ -329,16 +329,28 @@ def getDataFromSimbadSite():
                 except sl.Error as err:
                     print("Update/insert in 'simbad' table with online Simbad data for",row[0],"failed:",err)
 
-        # If found, update 'star' table
-        sqlStars = "UPDATE stars SET dist=COALESCE(NULLIF(dist,''),?),ra=?,dec=? WHERE name=?;"
+        sqliteConn.commit()
+
+    # Update 'star' table with data from 'simbad' table
+    for row in starsRows:
+        ra, dec, dist, mag, ids = getCoordFromSimbadLocalTable(row[0])
         if(ra != None):
+            # If found, update 'star' table
+            sqlStars = """
+                UPDATE stars
+                SET dist = CASE WHEN dist = 0 OR dist IS NULL OR dist = '' THEN ? ELSE dist END,
+                    mag = CASE WHEN mag = 0 OR mag IS NULL OR mag = '' THEN ? ELSE mag END,
+                    ra = ?,
+                    dec = ?
+                WHERE name = ?;
+            """
             try:
-                sqliteCursor.execute(sqlStars,(dist,ra,dec,row[0]))
+                sqliteCursor.execute(sqlStars,(dist,mag,ra,dec,row[0]))
                 logging.debug(f"Star {row[0]} data updated with data from Simbad")
             except sl.Error as err:
                 print("Update 'stars' table with Simbad data for",row[0],"failed:",err)
         else:
-            logging.warning(f"Star {row[0]}: not data found in Simbad")
+            logging.info(f"Star {row[0]} not present in Simbad")
 
     sqliteConn.commit()
 
