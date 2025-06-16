@@ -173,7 +173,7 @@ def getDataFromExoplanet(exoplanetLocalFile):
    
     planets = 0  # Variable incremented on every occurrence of the same star
     star = ''
-    ra=0;dec=0;mag=0;dist=0;spec_type="";mass=0;radius=0;temp=0;age=0;met=0
+    ra=0;dec=0;mag=0;dist=0;spec_type="";mass=0;radius=0;temp=0;age=0;met=0;altNames=""
     for lineExo in LinesExo:
         
         #if "Kepler-451" in lineExo:
