@@ -479,8 +479,6 @@ def getDataFromWikipedia(wikiLocalFile):
                 decW = str(int(decWf[1])) +"|"+ str(md) +"|"+ str(sd)    #get DEC from wiki page
             
                 # Search coordinates in 'stars' by Simbad(name) (distance ignored 'cause already in 'stars')
-                if name == "Kepler-10":
-                    print()
                 ra, dec, distSimbad, mag, ids = getCoordFromSimbadLocalTable(name)
                 """if(ra == None): # if not found in Simbad local try again online
                     distSimbad, ra, dec = getCoordFromSimbadOnline(name)
@@ -517,7 +515,8 @@ def getDataFromWikipedia(wikiLocalFile):
                     dist = valsWiki[4]      #dist in Wiki
                     if(distStars != "" and distStars != None and distStars > 0):
                         if(abs ((float(valsWiki[4]) - float(distStars))) > 1000):  # Too different. Maybe there is a problem
-                            print(name,"diff distance exo-wiki ("+str(distStars)+"-"+str(valsWiki[4])+") > 100. Keep Wiki")
+                            print(name,"difference in distance between Exoplanet and Wikipedia is "+str(distStars)+"-"+str(valsWiki[4])+" > 100 ly. Keeping Wikipedia datum")
+                            logging.warning(f"difference in distance between Exoplanet and Wikipedia for star {name} is "+str(distStars)+"-"+str(valsWiki[4])+" > 100 ly. Keeping Wikipedia datum")
                         else:
                             dist = distStars
                
