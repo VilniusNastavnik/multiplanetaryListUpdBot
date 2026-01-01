@@ -422,10 +422,19 @@ def getDataFromWikipedia(wikiLocalFile):
     logging.debug(f"getDataFromWikipedia")
     
     if(wikiLocalFile == None):
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'
+        url = "https://it.wikipedia.org/w/index.php"
+        params = {
+            "action": "raw",
+            "title": "Sistemi_multiplanetari"
         }
-        response = requests.get("https://it.wikipedia.org/w/index.php?action=raw&title=Sistemi_multiplanetari",headers)
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                          "AppleWebKit/537.36 (KHTML, like Gecko) "
+                          "Chrome/58.0.3029.110 Safari/537.3",
+            "Accept": "text/plain; charset=utf-8"
+        }
+
+        response = requests.get(url, params=params, headers=headers, timeout=30)
         if not response.ok:
             print("Download from https://it.wikipedia.org/w/index.php?action=raw&title=Sistemi_multiplanetari failed. Program terminated.")
             logging.error(f"Failed to retrieve data from Wikipedia: {response}")
@@ -658,3 +667,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
